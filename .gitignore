@@ -1,0 +1,6 @@
+.env
+.ecount_session.json
+output/
+venv/
+__pycache__/
+*.pyc
