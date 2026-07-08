@@ -334,9 +334,10 @@ def _append_stats_column(ws_stats, ref_date: date, brand_totals: dict):
                 break
 
     if date_col is None:
-        # 새 열 추가 (다음 빈 짝수 위치)
+        # 새 열 추가: col1=브랜드, col2=첫날짜수량, col3=첫날짜금액, col4=둘째날짜...
+        # 날짜열은 짝수 위치(2,4,6,...)에 위치
         date_col = max_col + 1
-        if date_col % 2 == 0:
+        if date_col % 2 != 0:   # 홀수이면 짝수로 올림
             date_col += 1
 
     # 날짜 헤더
