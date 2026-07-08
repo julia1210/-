@@ -132,7 +132,7 @@ def fetch_all_groups(base_date: str) -> dict:
 
     # 품목 마스터 로드 (입고단가 + 브랜드명 + 바코드)
     print("  품목 마스터 로드 중...")
-    item_master = fetch_item_master()
+    item_master, barcode_index = fetch_item_master()
 
     print("  전체 창고 재고 조회 중 (1회)...", end=" ", flush=True)
     raw = get_inventory_by_location(base_date)   # WH_CD 없이 → 전체 조회
@@ -169,7 +169,8 @@ def fetch_all_groups(base_date: str) -> dict:
 
     result = {}
     for prod_cd in all_prod_cds:
-        master = item_master.get(prod_cd, {})
+        # 품목코드로 먼저 조회, 없으면 바코드 역방향 조회 (컨기부 등 바코드=품목코드 케이스)
+        master = item_master.get(prod_cd) or barcode_index.get(prod_cd, {})
         prod_des = master.get("prod_des") or prod_cd
         # 브랜드: CONT1 우선, 없으면 PROD_DES 파싱
         brand = master.get("brand") or extract_brand(prod_des)

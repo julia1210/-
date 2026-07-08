@@ -18,7 +18,7 @@ base_date = datetime.now().strftime("%Y%m%d")
 kongi_codes = set(WH_GROUPS["컨기부"])
 
 print("품목 마스터 로드 중...")
-item_master = fetch_item_master()
+item_master, barcode_index = fetch_item_master()
 
 print("전체 재고 조회 중...")
 raw = get_inventory_by_location(base_date)

@@ -22,10 +22,9 @@ ITEM_CACHE_TTL = 24 * 60 * 60  # 24시간
 ITEM_LIST_PATH = "/OAPI/V2/InventoryBasic/GetBasicProductsList"
 
 
-def _fetch_items_page(sess: dict, offset: int = 0) -> list:
+def _fetch_items_raw(sess: dict) -> list:
     url = f"{sess['base_url']}{ITEM_LIST_PATH}?SESSION_ID={sess['session_id']}"
-    body = {} if offset == 0 else {"OFFSET_NO": offset}
-    resp = requests.post(url, json=body, timeout=TIMEOUT)
+    resp = requests.post(url, json={}, timeout=TIMEOUT)
     resp.raise_for_status()
     data = resp.json()
 
@@ -41,26 +40,6 @@ def _fetch_items_page(sess: dict, offset: int = 0) -> list:
             result = json.loads(result)
         return result if isinstance(result, list) else []
     return []
-
-
-def _fetch_items_raw(sess: dict) -> list:
-    """페이지네이션으로 전체 품목을 가져온다 (10,000개 한도 우회)."""
-    all_rows = []
-    offset = 0
-    PAGE = 10000
-    while True:
-        try:
-            rows = _fetch_items_page(sess, offset)
-        except Exception:
-            # 페이지네이션 미지원 시 첫 페이지 결과만 사용
-            if offset == 0:
-                raise
-            break
-        all_rows.extend(rows)
-        if len(rows) < PAGE:
-            break
-        offset += PAGE
-    return all_rows
 
 
 def fetch_item_master(force: bool = False) -> dict:
@@ -85,7 +64,7 @@ def fetch_item_master(force: bool = False) -> dict:
             if cache.get("fetched_at", 0) + ITEM_CACHE_TTL > now:
                 print(f"  품목 마스터 캐시 사용 ({len(cache['items'])}개, "
                       f"{int((now - cache['fetched_at']) / 60)}분 전 갱신)")
-                return cache["items"]
+                return cache["items"], cache.get("barcode_index", {})
         except Exception:
             pass
 
@@ -95,6 +74,7 @@ def fetch_item_master(force: bool = False) -> dict:
     print(f"{len(rows)}개")
 
     items = {}
+    barcode_index = {}  # BAR_CODE → item info (바코드로 등록된 품목코드 대응용)
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -107,15 +87,22 @@ def fetch_item_master(force: bool = False) -> dict:
         except (ValueError, TypeError):
             in_price = 0.0
 
-        items[prod_cd] = {
+        info = {
             "prod_des": str(row.get("PROD_DES") or "").strip(),
             "brand":    str(row.get("CONT1") or "").strip(),
             "in_price": in_price,
             "bar_code": str(row.get("BAR_CODE") or "").strip(),
         }
+        items[prod_cd] = info
 
-    # 캐시 저장
+        # 바코드가 있으면 역방향 인덱스 추가
+        bar_code = info["bar_code"]
+        if bar_code:
+            barcode_index[bar_code] = info
+
+    # 캐시 저장 (바코드 인덱스 포함)
     with open(ITEM_CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump({"fetched_at": now, "items": items}, f, ensure_ascii=False)
+        json.dump({"fetched_at": now, "items": items, "barcode_index": barcode_index},
+                  f, ensure_ascii=False)
 
-    return items
+    return items, barcode_index
