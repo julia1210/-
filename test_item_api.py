@@ -20,7 +20,7 @@ from ecount_auth import get_session
 TIMEOUT = 30
 
 # 이카운트 품목조회 API 경로 (기초등록API)
-ITEM_LIST_PATH = "/OAPI/V2/BaseInfo/GetListItem"
+ITEM_LIST_PATH = "/OAPI/V2/InventoryBasic/GetBasicProductsList"
 
 
 def main():
@@ -79,9 +79,8 @@ def main():
         for i, row in enumerate(rows[:3], 1):
             if isinstance(row, dict):
                 # 주요 필드만 출력
-                keys = ["PROD_CD", "PROD_DES", "PROD_SIZE_DES", "SALE_PRICE",
-                        "IN_PRICE", "COST_PRICE", "BAR_CODE", "BARCODE",
-                        "STANDARD_PRICE", "BUY_PRICE"]
+                keys = ["PROD_CD", "PROD_DES", "SIZE_DES", "IN_PRICE", "BAR_CODE",
+                        "OUT_PRICE", "PROD_TYPE", "UNIT"]
                 summary = {k: row.get(k) for k in keys if row.get(k) is not None}
                 print(f"  {i}. {json.dumps(summary, ensure_ascii=False)}")
 
