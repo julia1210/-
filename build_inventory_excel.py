@@ -43,7 +43,7 @@ from ecount_inventory import get_inventory_by_location, extract_rows
 from ecount_warehouses import WH_GROUPS, BRAND_SHEET_MAP, ALL_WH_CODES
 from ecount_items import fetch_item_master
 
-# 그룹코드 → 시트 표시명 (헤더에 사용)
+# 그룹코드 → 브랜드시트 열 헤더 표시명
 GROUP_DISPLAY = {
     "온라인":    "온라인",
     "영업":      "영업",
@@ -51,6 +51,21 @@ GROUP_DISPLAY = {
     "사업지원TF": "사업지원",
     "컨기부":    "컨기",
 }
+
+# 그룹코드 → 통계 시트 섹션명
+GROUP_SECTION_NAMES = {
+    "온라인":    "온라인사업부",
+    "영업":      "영업사업부",
+    "영업_위탁": "영업사업부_위탁매장",
+    "사업지원TF": "사업지원 TF",
+    "컨기부":    "컨텐츠기획부",
+}
+
+# 통계 브랜드 표시 순서
+STATS_BRAND_ORDER = [
+    "굿스마일", "메가하우스", "부시로드", "블로키", "반다이남코",
+    "핫토이", "하비재팬", "CCS TOYS", "CCS", "P001", "코코파", "기타브랜드",
+]
 
 # ─────────────────────────────────────────
 # 브랜드 추출
@@ -316,46 +331,128 @@ def _write_brand_sheet(ws, brand: str, rows: list, group_cols: list):
         col_offset += 2
 
 
-def _append_stats_column(ws_stats, ref_date: date, brand_totals: dict):
-    """
-    통계 시트에 새 날짜 열(수량/금액)을 추가한다.
-    brand_totals: {브랜드명: {수량: int, 금액: float}}
-    """
-    # 1행: 날짜들, 2행: 수량/금액 헤더
-    # 마지막 데이터 열 찾기
+def _find_date_col(ws_stats, header_row: int, ref_date: date) -> int:
+    """섹션 header_row에서 ref_date 열 위치를 찾거나 새 열 위치를 반환한다."""
     max_col = ws_stats.max_column
-    # 빈 열 체크 (이미 이 날짜가 있으면 덮어쓰기)
-    date_col = None
     for col in range(2, max_col + 1, 2):
-        cell_val = ws_stats.cell(row=1, column=col).value
-        if isinstance(cell_val, (date, datetime)):
-            cell_date = cell_val.date() if isinstance(cell_val, datetime) else cell_val
-            if cell_date == ref_date:
-                date_col = col
-                break
+        cv = ws_stats.cell(row=header_row, column=col).value
+        if isinstance(cv, (date, datetime)):
+            cd = cv.date() if isinstance(cv, datetime) else cv
+            if cd == ref_date:
+                return col
+    # 새 열: 짝수 위치
+    date_col = max_col + 1
+    if date_col % 2 != 0:
+        date_col += 1
+    return date_col
 
-    if date_col is None:
-        # 새 열 추가: col1=브랜드, col2=첫날짜수량, col3=첫날짜금액, col4=둘째날짜...
-        # 날짜열은 짝수 위치(2,4,6,...)에 위치
-        date_col = max_col + 1
-        if date_col % 2 != 0:   # 홀수이면 짝수로 올림
-            date_col += 1
 
-    # 날짜 헤더
-    ws_stats.cell(row=1, column=date_col, value=ref_date).number_format = "M/D"
-    ws_stats.cell(row=1, column=date_col).font = Font(bold=True)
-    ws_stats.cell(row=2, column=date_col, value="수량")
-    ws_stats.cell(row=2, column=date_col + 1, value="금액")
+def _write_section(ws, start_row: int, sect_name: str, ref_date: date,
+                   group_data: dict, brand_order: list):
+    """
+    통계 시트에 섹션 한 개를 작성한다 (새 파일용).
+    group_data: {brand: {수량, 금액}}
+    반환: 다음 섹션 시작 행 번호
+    """
+    r = start_row
 
-    # 브랜드별 합계 채우기
-    for row in ws_stats.iter_rows(min_row=3, max_row=ws_stats.max_row, values_only=False):
+    # 섹션 헤더 행 (부서명 + 날짜)
+    c = ws.cell(row=r, column=1, value=sect_name)
+    c.font = Font(bold=True)
+    ws.cell(row=r, column=2, value=ref_date).number_format = "M월 D일"
+    r += 1
+
+    # 수량/금액 서브헤더
+    ws.cell(row=r, column=2, value="수량")
+    ws.cell(row=r, column=3, value="금액")
+    r += 1
+
+    # 브랜드 행
+    for brand in brand_order:
+        d = group_data.get(brand)
+        if d is None:
+            continue
+        ws.cell(row=r, column=1, value=brand)
+        ws.cell(row=r, column=2, value=d["수량"])
+        ws.cell(row=r, column=3, value=d["금액"])
+        r += 1
+
+    # 합 계 행
+    total_qty = sum(d["수량"] for d in group_data.values())
+    total_amt = sum(d["금액"] for d in group_data.values())
+    ws.cell(row=r, column=1, value="합 계").font = Font(bold=True)
+    ws.cell(row=r, column=2, value=total_qty).font = Font(bold=True)
+    ws.cell(row=r, column=3, value=total_amt).font = Font(bold=True)
+    r += 1
+
+    # 빈 행 구분
+    r += 1
+    return r
+
+
+def _update_section(ws_stats, sect_start: int, ref_date: date, group_data: dict):
+    """
+    기존 통계 섹션에 새 날짜 열을 추가한다.
+    sect_start: 섹션 헤더 행 번호 (부서명이 있는 행)
+    """
+    date_col = _find_date_col(ws_stats, sect_start, ref_date)
+
+    ws_stats.cell(row=sect_start, column=date_col,
+                  value=ref_date).number_format = "M월 D일"
+    ws_stats.cell(row=sect_start + 1, column=date_col, value="수량")
+    ws_stats.cell(row=sect_start + 1, column=date_col + 1, value="금액")
+
+    for row in ws_stats.iter_rows(min_row=sect_start + 2):
         brand_cell = row[0]
         brand = str(brand_cell.value or "").strip()
         if not brand:
-            continue
-        totals = brand_totals.get(brand, {})
-        ws_stats.cell(row=brand_cell.row, column=date_col, value=totals.get("수량", 0))
-        ws_stats.cell(row=brand_cell.row, column=date_col + 1, value=totals.get("금액", 0))
+            break
+        if brand == "합 계":
+            total_qty = sum(d["수량"] for d in group_data.values())
+            total_amt = sum(d["금액"] for d in group_data.values())
+            ws_stats.cell(row=brand_cell.row, column=date_col, value=total_qty).font = Font(bold=True)
+            ws_stats.cell(row=brand_cell.row, column=date_col + 1, value=total_amt).font = Font(bold=True)
+            break
+        d = group_data.get(brand, {"수량": 0, "금액": 0})
+        ws_stats.cell(row=brand_cell.row, column=date_col, value=d["수량"])
+        ws_stats.cell(row=brand_cell.row, column=date_col + 1, value=d["금액"])
+
+
+def _write_stats_sheet(ws_stats, ref_date: date, brand_group_totals: dict,
+                       group_cols: list, all_brands: list):
+    """
+    통계 시트 전체를 부서별 섹션으로 작성하거나 기존에 날짜 열을 추가한다.
+
+    brand_group_totals: {group: {brand: {수량: int, 금액: int}}}
+    all_brands: 브랜드 표시 순서 목록
+    """
+    all_section_names = set(GROUP_SECTION_NAMES.values())
+
+    # 기존 섹션 위치 탐색
+    existing_sections: dict[str, int] = {}
+    for row in ws_stats.iter_rows(min_col=1, max_col=1):
+        val = str(row[0].value or "").strip()
+        if val in all_section_names:
+            existing_sections[val] = row[0].row
+
+    if existing_sections:
+        # 기존 파일: 각 섹션에 날짜 열 추가
+        for group in group_cols:
+            sect_name = GROUP_SECTION_NAMES.get(group, group)
+            if sect_name not in existing_sections:
+                continue
+            _update_section(ws_stats, existing_sections[sect_name],
+                            ref_date, brand_group_totals.get(group, {}))
+    else:
+        # 새 파일: 전체 구조 생성
+        current_row = 1
+        for group in group_cols:
+            sect_name = GROUP_SECTION_NAMES.get(group, group)
+            group_data = brand_group_totals.get(group, {})
+            if not group_data:
+                continue
+            current_row = _write_section(ws_stats, current_row, sect_name,
+                                          ref_date, group_data, all_brands)
 
 
 def build_excel(inventory: dict, base_date: str, base_excel: Path | None,
@@ -411,30 +508,28 @@ def build_excel(inventory: dict, base_date: str, base_excel: Path | None,
         _write_brand_sheet(ws, brand, items, group_cols)
         print(f"  시트 [{sheet_name}]: {len(items)}개 품목")
 
-    # 통계 시트 처리 (모든 그룹 수량/금액 합산)
-    brand_totals: dict[str, dict] = {}
-    for brand, items in brand_items.items():
-        total_qty = sum(
-            sum(it["groups"].get(g, 0) for g in WH_GROUPS)
-            for it in items
-        )
-        total_amt = sum(
-            sum(it["groups"].get(g, 0) for g in WH_GROUPS) * (it["price"] or 0)
-            for it in items
-        )
-        brand_totals[brand] = {"수량": int(total_qty), "금액": int(total_amt)}
+    # 통계 시트 처리: 그룹별 × 브랜드별 수량/금액 집계
+    brand_group_totals: dict[str, dict] = {}
+    for group in group_cols:
+        group_data = {}
+        for brand, items in brand_items.items():
+            qty = sum(int(it["groups"].get(group, 0)) for it in items)
+            amt = sum(int(it["groups"].get(group, 0)) * int(it["price"] or 0) for it in items)
+            if qty != 0 or amt != 0:
+                group_data[brand] = {"수량": qty, "금액": amt}
+        brand_group_totals[group] = group_data
+
+    # 통계 브랜드 표시 순서 (STATS_BRAND_ORDER + 실제 존재하는 나머지)
+    all_brands_set = set(brand_items.keys())
+    ordered = [b for b in STATS_BRAND_ORDER if b in all_brands_set]
+    ordered += sorted(all_brands_set - set(ordered))
 
     if "통계" in wb.sheetnames:
         ws_stats = wb["통계"]
     else:
         ws_stats = wb.create_sheet(title="통계", index=0)
-        # 초기 구조 설정
-        ws_stats.cell(row=1, column=1, value="온라인사업부")
-        ws_stats.cell(row=2, column=1, value=None)
-        for r_idx, brand in enumerate(sorted(brand_totals.keys()), 3):
-            ws_stats.cell(row=r_idx, column=1, value=brand)
 
-    _append_stats_column(ws_stats, ref_date, brand_totals)
+    _write_stats_sheet(ws_stats, ref_date, brand_group_totals, group_cols, ordered)
 
     # 저장
     out_path.parent.mkdir(exist_ok=True)
