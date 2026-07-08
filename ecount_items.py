@@ -22,9 +22,9 @@ ITEM_CACHE_TTL = 24 * 60 * 60  # 24시간
 ITEM_LIST_PATH = "/OAPI/V2/InventoryBasic/GetBasicProductsList"
 
 
-def _fetch_items_raw(sess: dict) -> list:
+def _fetch_items_page(sess: dict, offset: int) -> list:
     url = f"{sess['base_url']}{ITEM_LIST_PATH}?SESSION_ID={sess['session_id']}"
-    resp = requests.post(url, json={}, timeout=TIMEOUT)
+    resp = requests.post(url, json={"OFFSET_NO": str(offset)}, timeout=TIMEOUT)
     resp.raise_for_status()
     data = resp.json()
 
@@ -36,11 +36,24 @@ def _fetch_items_raw(sess: dict) -> list:
     raw_data = data.get("Data", {})
     if isinstance(raw_data, dict):
         result = raw_data.get("Result", [])
-        # Result가 JSON 문자열로 오는 경우 파싱
         if isinstance(result, str):
             result = json.loads(result)
         return result if isinstance(result, list) else []
     return []
+
+
+def _fetch_items_raw(sess: dict) -> list:
+    """페이지네이션으로 전체 품목을 가져온다 (10,000개 한도 우회)."""
+    all_rows = []
+    offset = 0
+    PAGE = 10000
+    while True:
+        rows = _fetch_items_page(sess, offset)
+        all_rows.extend(rows)
+        if len(rows) < PAGE:
+            break
+        offset += PAGE
+    return all_rows
 
 
 def fetch_item_master(force: bool = False) -> dict:
