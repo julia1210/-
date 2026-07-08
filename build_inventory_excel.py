@@ -41,6 +41,7 @@ from openpyxl.utils import get_column_letter
 
 from ecount_inventory import get_inventory_by_location, extract_rows
 from ecount_warehouses import WH_GROUPS, BRAND_SHEET_MAP, ALL_WH_CODES
+from ecount_items import fetch_item_master
 
 # ─────────────────────────────────────────
 # 브랜드 추출
@@ -105,22 +106,25 @@ def fetch_all_groups(base_date: str) -> dict:
         for code in codes:
             wh_to_group[code] = group
 
+    # 품목 마스터 로드 (입고단가 + 브랜드명 + 바코드)
+    print("  품목 마스터 로드 중...")
+    item_master = fetch_item_master()
+
     print("  전체 창고 재고 조회 중 (1회)...", end=" ", flush=True)
     raw = get_inventory_by_location(base_date)   # WH_CD 없이 → 전체 조회
     all_rows = extract_rows(raw)
     print(f"{len(all_rows)}건")
 
     group_data: dict[str, dict[str, float]] = {g: defaultdict(float) for g in WH_GROUPS}
-    prod_meta: dict[str, dict] = {}
 
     for row in all_rows:
         if not isinstance(row, dict):
             continue
 
-        wh_cd  = str(row.get("WH_CD") or "").strip()
+        wh_cd   = str(row.get("WH_CD") or "").strip()
         prod_cd = str(row.get("PROD_CD") or "").strip()
         if not prod_cd or wh_cd not in wh_to_group:
-            continue   # 우리가 관리하지 않는 창고는 무시
+            continue
 
         group = wh_to_group[wh_cd]
         try:
@@ -129,30 +133,27 @@ def fetch_all_groups(base_date: str) -> dict:
             qty = 0.0
         group_data[group][prod_cd] += qty
 
-        if prod_cd not in prod_meta:
-            prod_des = str(row.get("PROD_DES") or "").strip()
-            prod_meta[prod_cd] = {
-                "prod_des": prod_des,
-                "brand": extract_brand(prod_des),
-            }
-
     # 그룹별 집계 현황 출력
     for g, gd in group_data.items():
         total_qty = sum(gd.values())
         print(f"  [{g}] {len(gd)}개 품목, 총 {int(total_qty):,}개")
 
-    # 통합
+    # 통합 (품목 마스터에서 단가·브랜드 보강)
     all_prod_cds: set[str] = set()
     for gd in group_data.values():
         all_prod_cds.update(gd.keys())
 
     result = {}
     for prod_cd in all_prod_cds:
-        meta = prod_meta.get(prod_cd, {"prod_des": prod_cd, "brand": "기타브랜드"})
+        master = item_master.get(prod_cd, {})
+        prod_des = master.get("prod_des") or prod_cd
+        # 브랜드: CONT1 우선, 없으면 PROD_DES 파싱
+        brand = master.get("brand") or extract_brand(prod_des)
         result[prod_cd] = {
-            "prod_des": meta["prod_des"],
-            "brand": meta["brand"],
-            "groups": {g: group_data[g].get(prod_cd, 0.0) for g in WH_GROUPS},
+            "prod_des": prod_des,
+            "brand":    brand,
+            "in_price": master.get("in_price", 0.0),
+            "groups":   {g: group_data[g].get(prod_cd, 0.0) for g in WH_GROUPS},
         }
 
     return result
@@ -367,9 +368,11 @@ def build_excel(inventory: dict, base_date: str, base_excel: Path | None,
         if brand not in NAMED_BRANDS:
             brand = "기타브랜드"
         existing = prod_map.get(prod_cd, {})
+        # 단가: 기존 Excel 우선 → 품목 마스터(in_price) 순으로 사용
+        price = existing.get("price") or (info["in_price"] if info.get("in_price") else None)
         brand_items[brand].append({
-            "name": existing.get("name") or info["prod_des"],
-            "price": existing.get("price"),
+            "name":  existing.get("name") or info["prod_des"],
+            "price": price,
             "groups": info["groups"],
         })
 

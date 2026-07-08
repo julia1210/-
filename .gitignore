@@ -1,5 +1,6 @@
 .env
 .ecount_session.json
+.ecount_items_cache.json
 output/
 venv/
 __pycache__/
