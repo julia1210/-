@@ -294,11 +294,10 @@ def _write_brand_sheet(ws, brand: str, rows: list, group_cols: list):
         for g in active:
             qty = item["groups"].get(g, 0.0)
             qty_val = int(qty) if qty == int(qty) else qty
+            price = item["price"] or 0
+            amt_val = int(qty_val * price)
             ws.cell(row=r_idx, column=col_offset, value=qty_val)
-            price_letter = get_column_letter(price_col)
-            qty_letter = get_column_letter(col_offset)
-            ws.cell(row=r_idx, column=col_offset + 1,
-                    value=f"={qty_letter}{r_idx}*{price_letter}{r_idx}")
+            ws.cell(row=r_idx, column=col_offset + 1, value=amt_val)
             col_offset += 2
 
     # 합계 행
@@ -306,12 +305,14 @@ def _write_brand_sheet(ws, brand: str, rows: list, group_cols: list):
     ws.cell(row=total_row, column=2, value="합계").font = Font(bold=True)
     col_offset = 4
     for g in active:
-        qty_letter = get_column_letter(col_offset)
-        amt_letter = get_column_letter(col_offset + 1)
-        ws.cell(row=total_row, column=col_offset,
-                value=f"=SUM({qty_letter}2:{qty_letter}{total_row - 1})").font = Font(bold=True)
-        ws.cell(row=total_row, column=col_offset + 1,
-                value=f"=SUM({amt_letter}2:{amt_letter}{total_row - 1})").font = Font(bold=True)
+        total_qty = sum(
+            int(it["groups"].get(g, 0)) for it in rows
+        )
+        total_amt = sum(
+            int(it["groups"].get(g, 0)) * int(it["price"] or 0) for it in rows
+        )
+        ws.cell(row=total_row, column=col_offset, value=total_qty).font = Font(bold=True)
+        ws.cell(row=total_row, column=col_offset + 1, value=total_amt).font = Font(bold=True)
         col_offset += 2
 
 
