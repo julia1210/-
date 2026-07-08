@@ -162,12 +162,11 @@ def fetch_all_groups(base_date: str) -> dict:
 # Excel 로드 / 파싱
 # ─────────────────────────────────────────
 
-BRAND_SHEET_HEADER = ("브랜드", "품목코드", "품목명[규격]", "입고단가",
-                      "온라인 수량", "온라인 재고금액",
-                      "영업 수량", "영업 재고금액",
-                      "사업지원 수량", "사업지원 재고금액")
-
-DIRECT_SHEET_HEADER = ("재고위치", "바코드", "제품명", "재고수량", "입고단가", "재고금액")
+# 자체 시트를 갖는 브랜드 목록 (여기 없으면 기타브랜드 시트로 합산)
+NAMED_BRANDS = {
+    "굿스마일", "메가하우스", "부시로드", "블로키", "반다이남코",
+    "핫토이", "하비재팬", "CCS TOYS", "CCS", "P001", "코코파",
+}
 
 
 def load_base_excel(path: Path) -> dict:
@@ -235,15 +234,16 @@ CENTER = Alignment(horizontal="center", vertical="center")
 def _write_brand_sheet(ws, brand: str, rows: list, group_cols: list):
     """
     브랜드별 시트를 작성한다.
-    rows: [ {prod_cd, name, price, groups:{온라인:qty, ...}} ]
-    group_cols: ['온라인', '영업', '사업지원TF', '컨기부'] 중 사용할 것들
+    rows: [ {name, price, groups:{온라인:qty, ...}} ]
+    group_cols: WH_GROUPS 키 목록
     """
     ws.freeze_panes = "A2"
 
-    # 헤더 작성
-    headers = ["브랜드", "품목코드", "품목명[규격]", "입고단가"]
+    # 헤더: 브랜드, 품목명, 입고단가, (그룹별 수량/금액)
+    headers = ["브랜드", "품목명", "입고단가"]
     for g in group_cols:
-        headers += [f"{g} 수량", f"{g} 재고금액"]
+        headers += [f"{g}수량" if g == "영업" else f"{g} 수량",
+                    f"{g} 재고금액"]
 
     for col, h in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=h)
@@ -253,32 +253,33 @@ def _write_brand_sheet(ws, brand: str, rows: list, group_cols: list):
         cell.border = THIN_BORDER
 
     # 열 너비
-    col_widths = [10, 18, 50, 12] + [12, 16] * len(group_cols)
+    col_widths = [10, 55, 12] + [12, 16] * len(group_cols)
     for col, w in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(col)].width = w
 
+    price_col = 3
+
     # 데이터 행
     for r_idx, item in enumerate(rows, 2):
-        price_col = 4
         ws.cell(row=r_idx, column=1, value=brand)
-        ws.cell(row=r_idx, column=2, value=item["prod_cd"])
-        ws.cell(row=r_idx, column=3, value=item["name"])
-        ws.cell(row=r_idx, column=4, value=item["price"])
+        ws.cell(row=r_idx, column=2, value=item["name"])
+        ws.cell(row=r_idx, column=3, value=item["price"])
 
-        col_offset = 5
+        col_offset = 4
         for g in group_cols:
             qty = item["groups"].get(g, 0.0)
-            qty_cell = ws.cell(row=r_idx, column=col_offset, value=int(qty) if qty == int(qty) else qty)
+            qty_val = int(qty) if qty == int(qty) else qty
+            ws.cell(row=r_idx, column=col_offset, value=qty_val)
             price_letter = get_column_letter(price_col)
             qty_letter = get_column_letter(col_offset)
-            amt_cell = ws.cell(row=r_idx, column=col_offset + 1,
-                               value=f"={qty_letter}{r_idx}*{price_letter}{r_idx}")
+            ws.cell(row=r_idx, column=col_offset + 1,
+                    value=f"={qty_letter}{r_idx}*{price_letter}{r_idx}")
             col_offset += 2
 
     # 합계 행
     total_row = len(rows) + 2
-    ws.cell(row=total_row, column=3, value="합계").font = Font(bold=True)
-    col_offset = 5
+    ws.cell(row=total_row, column=2, value="합계").font = Font(bold=True)
+    col_offset = 4
     for g in group_cols:
         qty_letter = get_column_letter(col_offset)
         amt_letter = get_column_letter(col_offset + 1)
@@ -358,14 +359,15 @@ def build_excel(inventory: dict, base_date: str, base_excel: Path | None,
         prod_map = {}
         print("\n새 Excel 파일 생성")
 
-    # 브랜드별 품목 그룹핑 (이카운트 데이터 기준)
+    # 브랜드별 품목 그룹핑
+    # NAMED_BRANDS에 없는 브랜드는 모두 기타브랜드로 합산
     brand_items: dict[str, list] = defaultdict(list)
     for prod_cd, info in sorted(inventory.items()):
         brand = info["brand"]
-        # 기존 Excel에 있으면 기존 정보 우선
+        if brand not in NAMED_BRANDS:
+            brand = "기타브랜드"
         existing = prod_map.get(prod_cd, {})
         brand_items[brand].append({
-            "prod_cd": prod_cd,
             "name": existing.get("name") or info["prod_des"],
             "price": existing.get("price"),
             "groups": info["groups"],
@@ -373,7 +375,7 @@ def build_excel(inventory: dict, base_date: str, base_excel: Path | None,
 
     # 브랜드 시트 생성/업데이트
     for brand, items in sorted(brand_items.items()):
-        sheet_name = BRAND_SHEET_MAP.get(brand, brand)[:31]  # Excel 시트명 31자 제한
+        sheet_name = BRAND_SHEET_MAP.get(brand, brand)[:31]
         if sheet_name in wb.sheetnames:
             del wb[sheet_name]
         ws = wb.create_sheet(title=sheet_name)
