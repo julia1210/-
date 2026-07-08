@@ -195,13 +195,17 @@ NAMED_BRANDS = {
 }
 
 
-def load_base_excel(path: Path) -> dict:
+def load_base_excel(path: Path) -> tuple[dict, dict]:
     """
-    기존 Excel에서 {품목코드: {brand, name, price}} 매핑을 로드한다.
-    통계 시트의 기존 날짜 열도 읽어온다.
+    기존 Excel에서 가격 정보를 로드한다.
+
+    반환:
+      prod_map   : prod_cd  → {brand, name, price, sheet}  (품목코드 컬럼 있는 구형 포맷)
+      name_price : 품목명   → price                         (브랜드|품목명|입고단가 신형 포맷)
     """
     wb = openpyxl.load_workbook(path, data_only=True)
-    prod_map = {}   # prod_cd → {brand, name, price, sheet}
+    prod_map   = {}
+    name_price = {}
 
     for sh_name in wb.sheetnames:
         if sh_name == "통계":
@@ -210,9 +214,20 @@ def load_base_excel(path: Path) -> dict:
         rows = list(ws.iter_rows(values_only=True))
         if not rows:
             continue
-        header = rows[0]
-        # 브랜드별 시트
-        if len(header) >= 6 and str(header[1] or "").strip() == "품목코드":
+        header = [str(h or "").strip() for h in rows[0]]
+
+        # 신형 포맷: 브랜드 | 품목명 | 입고단가 | ...
+        if len(header) >= 3 and header[0] == "브랜드" and header[1] == "품목명" and header[2] == "입고단가":
+            for row in rows[1:]:
+                if not row or row[1] is None:
+                    continue
+                name = str(row[1]).strip()
+                price = row[2]
+                if name and price not in (None, 0, ""):
+                    name_price[name] = price
+
+        # 구형 포맷: 브랜드 | 품목코드 | 품목명 | 입고단가 | ...
+        elif len(header) >= 4 and header[1] == "품목코드":
             for row in rows[1:]:
                 if not row or row[1] is None:
                     continue
@@ -221,12 +236,13 @@ def load_base_excel(path: Path) -> dict:
                     continue
                 prod_map[prod_cd] = {
                     "brand": str(row[0] or "").strip(),
-                    "name": str(row[2] or "").strip(),
+                    "name":  str(row[2] or "").strip(),
                     "price": row[3],
                     "sheet": sh_name,
                 }
-        # 직영/메가직영 형식 (바코드 컬럼이 2번째)
-        elif len(header) >= 4 and str(header[1] or "").strip() == "바코드":
+
+        # 직영 포맷: 재고위치 | 바코드 | ...
+        elif len(header) >= 4 and header[1] == "바코드":
             for row in rows[1:]:
                 if not row or row[1] is None:
                     continue
@@ -235,13 +251,13 @@ def load_base_excel(path: Path) -> dict:
                     continue
                 prod_map[prod_cd] = {
                     "brand": sh_name,
-                    "name": str(row[2] or "").strip(),
+                    "name":  str(row[2] or "").strip(),
                     "price": row[4] if len(row) > 4 else None,
                     "sheet": sh_name,
                 }
 
     wb.close()
-    return prod_map
+    return prod_map, name_price
 
 
 # ─────────────────────────────────────────
@@ -474,14 +490,15 @@ def build_excel(inventory: dict, base_date: str, base_excel: Path | None,
     # 기존 파일 로드 or 새 워크북
     if base_excel and base_excel.exists():
         wb = openpyxl.load_workbook(base_excel)
-        prod_map = load_base_excel(base_excel)
-        print(f"\n기존 Excel 로드: {base_excel} ({len(prod_map)}개 품목코드)")
+        prod_map, name_price = load_base_excel(base_excel)
+        print(f"\n기존 Excel 로드: {base_excel} ({len(prod_map)}개 품목코드, {len(name_price)}개 품목명 단가)")
     else:
         wb = openpyxl.Workbook()
         # 기본 시트 제거
         if "Sheet" in wb.sheetnames:
             del wb["Sheet"]
         prod_map = {}
+        name_price = {}
         print("\n새 Excel 파일 생성")
 
     # 브랜드별 품목 그룹핑
@@ -492,10 +509,13 @@ def build_excel(inventory: dict, base_date: str, base_excel: Path | None,
         if brand not in NAMED_BRANDS:
             brand = "기타브랜드"
         existing = prod_map.get(prod_cd, {})
-        # 단가: 기존 Excel 우선 → 품목 마스터(in_price) 순으로 사용
-        price = existing.get("price") or (info["in_price"] if info.get("in_price") else None)
+        prod_name = existing.get("name") or info["prod_des"]
+        # 단가: 기존 Excel 품목코드 → 품목명 → 품목 마스터(in_price) 순으로 사용
+        price = (existing.get("price")
+                 or name_price.get(prod_name)
+                 or (info["in_price"] if info.get("in_price") else None))
         brand_items[brand].append({
-            "name":  existing.get("name") or info["prod_des"],
+            "name":  prod_name,
             "price": price,
             "groups": info["groups"],
         })
