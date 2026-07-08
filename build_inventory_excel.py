@@ -43,6 +43,15 @@ from ecount_inventory import get_inventory_by_location, extract_rows
 from ecount_warehouses import WH_GROUPS, BRAND_SHEET_MAP, ALL_WH_CODES
 from ecount_items import fetch_item_master
 
+# 그룹코드 → 시트 표시명 (헤더에 사용)
+GROUP_DISPLAY = {
+    "온라인":    "온라인",
+    "영업":      "영업",
+    "영업_위탁": "영업_위탁",
+    "사업지원TF": "사업지원",
+    "컨기부":    "컨기",
+}
+
 # ─────────────────────────────────────────
 # 브랜드 추출
 # ─────────────────────────────────────────
@@ -232,19 +241,34 @@ THIN_BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 CENTER = Alignment(horizontal="center", vertical="center")
 
 
+def _active_groups(rows: list, group_cols: list) -> list:
+    """해당 브랜드 품목 중 수량이 있는 그룹만 반환한다."""
+    active = []
+    for g in group_cols:
+        if any(item["groups"].get(g, 0) != 0 for item in rows):
+            active.append(g)
+    # 수량이 있는 그룹이 하나도 없으면 전체 반환
+    return active if active else group_cols
+
+
 def _write_brand_sheet(ws, brand: str, rows: list, group_cols: list):
     """
     브랜드별 시트를 작성한다.
     rows: [ {name, price, groups:{온라인:qty, ...}} ]
-    group_cols: WH_GROUPS 키 목록
+    group_cols: WH_GROUPS 키 목록 (데이터 있는 그룹만 동적으로 축소됨)
     """
     ws.freeze_panes = "A2"
 
+    # 데이터 있는 그룹만 표시
+    active = _active_groups(rows, group_cols)
+
     # 헤더: 브랜드, 품목명, 입고단가, (그룹별 수량/금액)
+    # 표시명: 사업지원TF → 사업지원, 컨기부 → 컨기
     headers = ["브랜드", "품목명", "입고단가"]
-    for g in group_cols:
-        headers += [f"{g}수량" if g == "영업" else f"{g} 수량",
-                    f"{g} 재고금액"]
+    for g in active:
+        disp = GROUP_DISPLAY.get(g, g)
+        headers += [f"{disp}수량" if disp == "영업" else f"{disp} 수량",
+                    f"{disp} 재고금액"]
 
     for col, h in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=h)
@@ -254,7 +278,7 @@ def _write_brand_sheet(ws, brand: str, rows: list, group_cols: list):
         cell.border = THIN_BORDER
 
     # 열 너비
-    col_widths = [10, 55, 12] + [12, 16] * len(group_cols)
+    col_widths = [10, 55, 12] + [12, 16] * len(active)
     for col, w in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(col)].width = w
 
@@ -267,7 +291,7 @@ def _write_brand_sheet(ws, brand: str, rows: list, group_cols: list):
         ws.cell(row=r_idx, column=3, value=item["price"])
 
         col_offset = 4
-        for g in group_cols:
+        for g in active:
             qty = item["groups"].get(g, 0.0)
             qty_val = int(qty) if qty == int(qty) else qty
             ws.cell(row=r_idx, column=col_offset, value=qty_val)
@@ -281,7 +305,7 @@ def _write_brand_sheet(ws, brand: str, rows: list, group_cols: list):
     total_row = len(rows) + 2
     ws.cell(row=total_row, column=2, value="합계").font = Font(bold=True)
     col_offset = 4
-    for g in group_cols:
+    for g in active:
         qty_letter = get_column_letter(col_offset)
         amt_letter = get_column_letter(col_offset + 1)
         ws.cell(row=total_row, column=col_offset,
@@ -385,15 +409,18 @@ def build_excel(inventory: dict, base_date: str, base_excel: Path | None,
         _write_brand_sheet(ws, brand, items, group_cols)
         print(f"  시트 [{sheet_name}]: {len(items)}개 품목")
 
-    # 통계 시트 처리
+    # 통계 시트 처리 (모든 그룹 수량/금액 합산)
     brand_totals: dict[str, dict] = {}
     for brand, items in brand_items.items():
-        online_qty = sum(it["groups"].get("온라인", 0) for it in items)
-        online_amt = sum(
-            it["groups"].get("온라인", 0) * (it["price"] or 0)
+        total_qty = sum(
+            sum(it["groups"].get(g, 0) for g in WH_GROUPS)
             for it in items
         )
-        brand_totals[brand] = {"수량": int(online_qty), "금액": int(online_amt)}
+        total_amt = sum(
+            sum(it["groups"].get(g, 0) for g in WH_GROUPS) * (it["price"] or 0)
+            for it in items
+        )
+        brand_totals[brand] = {"수량": int(total_qty), "금액": int(total_amt)}
 
     if "통계" in wb.sheetnames:
         ws_stats = wb["통계"]
