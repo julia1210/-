@@ -22,9 +22,10 @@ ITEM_CACHE_TTL = 24 * 60 * 60  # 24시간
 ITEM_LIST_PATH = "/OAPI/V2/InventoryBasic/GetBasicProductsList"
 
 
-def _fetch_items_page(sess: dict, offset: int) -> list:
+def _fetch_items_page(sess: dict, offset: int = 0) -> list:
     url = f"{sess['base_url']}{ITEM_LIST_PATH}?SESSION_ID={sess['session_id']}"
-    resp = requests.post(url, json={"OFFSET_NO": str(offset)}, timeout=TIMEOUT)
+    body = {} if offset == 0 else {"OFFSET_NO": offset}
+    resp = requests.post(url, json=body, timeout=TIMEOUT)
     resp.raise_for_status()
     data = resp.json()
 
@@ -48,7 +49,13 @@ def _fetch_items_raw(sess: dict) -> list:
     offset = 0
     PAGE = 10000
     while True:
-        rows = _fetch_items_page(sess, offset)
+        try:
+            rows = _fetch_items_page(sess, offset)
+        except Exception:
+            # 페이지네이션 미지원 시 첫 페이지 결과만 사용
+            if offset == 0:
+                raise
+            break
         all_rows.extend(rows)
         if len(rows) < PAGE:
             break
