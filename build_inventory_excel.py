@@ -88,7 +88,9 @@ def extract_brand(prod_des: str) -> str:
 
 def fetch_all_groups(base_date: str) -> dict:
     """
-    모든 창고 그룹의 재고를 조회해 집계한다.
+    전체 창고 재고를 1회 조회 후 창고코드로 그룹별 집계한다.
+    (창고별 개별 조회 → 10분 한도 소진 방지)
+
     반환: {
         prod_cd: {
             "prod_des": str,
@@ -97,58 +99,54 @@ def fetch_all_groups(base_date: str) -> dict:
         }
     }
     """
-    # 그룹별 창고 재고를 한 번씩 조회
-    group_data: dict[str, dict[str, float]] = {}   # group → {prod_cd: qty}
+    # 사용할 창고코드 집합 (그룹에 포함된 것만)
+    wh_to_group: dict[str, str] = {}
+    for group, codes in WH_GROUPS.items():
+        for code in codes:
+            wh_to_group[code] = group
 
-    for group, wh_codes in WH_GROUPS.items():
-        group_data[group] = defaultdict(float)
-        for wh_cd in wh_codes:
-            print(f"  조회 중: [{group}] 창고 {wh_cd}...", end=" ")
-            try:
-                raw = get_inventory_by_location(base_date, wh_cd=wh_cd)
-                rows = extract_rows(raw)
-                for row in rows:
-                    if not isinstance(row, dict):
-                        continue
-                    prod_cd = str(row.get("PROD_CD") or "").strip()
-                    if not prod_cd:
-                        continue
-                    try:
-                        qty = float(str(row.get("BAL_QTY") or 0).replace(",", ""))
-                    except (ValueError, TypeError):
-                        qty = 0.0
-                    group_data[group][prod_cd] += qty
-                print(f"{len(rows)}건")
-            except Exception as e:
-                print(f"[실패] {e}")
+    print("  전체 창고 재고 조회 중 (1회)...", end=" ", flush=True)
+    raw = get_inventory_by_location(base_date)   # WH_CD 없이 → 전체 조회
+    all_rows = extract_rows(raw)
+    print(f"{len(all_rows)}건")
 
-    # prod_cd 기준으로 통합 (PROD_DES / 브랜드 포함)
-    # 마지막으로 조회에 성공한 행에서 prod_des 가져오기 위해 별도 pass
-    prod_meta: dict[str, dict] = {}   # prod_cd → {prod_des, brand}
+    group_data: dict[str, dict[str, float]] = {g: defaultdict(float) for g in WH_GROUPS}
+    prod_meta: dict[str, dict] = {}
 
-    for group, wh_codes in WH_GROUPS.items():
-        for wh_cd in wh_codes:
-            try:
-                raw = get_inventory_by_location(base_date, wh_cd=wh_cd)
-                for row in extract_rows(raw):
-                    if not isinstance(row, dict):
-                        continue
-                    prod_cd = str(row.get("PROD_CD") or "").strip()
-                    if prod_cd and prod_cd not in prod_meta:
-                        prod_des = str(row.get("PROD_DES") or "").strip()
-                        prod_meta[prod_cd] = {
-                            "prod_des": prod_des,
-                            "brand": extract_brand(prod_des),
-                        }
-            except Exception:
-                pass
+    for row in all_rows:
+        if not isinstance(row, dict):
+            continue
+
+        wh_cd  = str(row.get("WH_CD") or "").strip()
+        prod_cd = str(row.get("PROD_CD") or "").strip()
+        if not prod_cd or wh_cd not in wh_to_group:
+            continue   # 우리가 관리하지 않는 창고는 무시
+
+        group = wh_to_group[wh_cd]
+        try:
+            qty = float(str(row.get("BAL_QTY") or 0).replace(",", ""))
+        except (ValueError, TypeError):
+            qty = 0.0
+        group_data[group][prod_cd] += qty
+
+        if prod_cd not in prod_meta:
+            prod_des = str(row.get("PROD_DES") or "").strip()
+            prod_meta[prod_cd] = {
+                "prod_des": prod_des,
+                "brand": extract_brand(prod_des),
+            }
+
+    # 그룹별 집계 현황 출력
+    for g, gd in group_data.items():
+        total_qty = sum(gd.values())
+        print(f"  [{g}] {len(gd)}개 품목, 총 {int(total_qty):,}개")
 
     # 통합
-    result = {}
-    all_prod_cds = set()
+    all_prod_cds: set[str] = set()
     for gd in group_data.values():
         all_prod_cds.update(gd.keys())
 
+    result = {}
     for prod_cd in all_prod_cds:
         meta = prod_meta.get(prod_cd, {"prod_des": prod_cd, "brand": "기타브랜드"})
         result[prod_cd] = {
