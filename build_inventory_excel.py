@@ -428,6 +428,7 @@ def _update_section(ws_stats, sect_start: int, ref_date: date, group_data: dict)
     """
     기존 통계 섹션에 새 날짜 열을 추가한다.
     sect_start: 섹션 헤더 행 번호 (부서명이 있는 행)
+    group_data에 있는 브랜드가 기존 행에 없으면 합 계 앞에 행을 삽입한다.
     """
     date_col = _find_date_col(ws_stats, sect_start, ref_date)
 
@@ -436,20 +437,39 @@ def _update_section(ws_stats, sect_start: int, ref_date: date, group_data: dict)
     ws_stats.cell(row=sect_start + 1, column=date_col, value="수량")
     ws_stats.cell(row=sect_start + 1, column=date_col + 1, value="금액")
 
+    # 1pass: 기존 브랜드 행에 값 채우고, 합 계 행 위치 기록
+    written_brands = set()
+    total_row = None
     for row in ws_stats.iter_rows(min_row=sect_start + 2):
         brand_cell = row[0]
         brand = str(brand_cell.value or "").strip()
         if not brand:
             break
         if brand == "합 계":
-            total_qty = sum(d["수량"] for d in group_data.values())
-            total_amt = sum(d["금액"] for d in group_data.values())
-            ws_stats.cell(row=brand_cell.row, column=date_col, value=total_qty).font = Font(bold=True)
-            ws_stats.cell(row=brand_cell.row, column=date_col + 1, value=total_amt).font = Font(bold=True)
+            total_row = brand_cell.row
             break
         d = group_data.get(brand, {"수량": 0, "금액": 0})
         ws_stats.cell(row=brand_cell.row, column=date_col, value=d["수량"])
         ws_stats.cell(row=brand_cell.row, column=date_col + 1, value=d["금액"])
+        written_brands.add(brand)
+
+    # 2pass: group_data에 있지만 기존 행에 없는 브랜드 → 합 계 앞에 삽입
+    missing = [b for b in STATS_BRAND_ORDER if b in group_data and b not in written_brands]
+    if missing and total_row:
+        ws_stats.insert_rows(total_row, len(missing))
+        for i, brand in enumerate(missing):
+            r = total_row + i
+            ws_stats.cell(row=r, column=1, value=brand)
+            ws_stats.cell(row=r, column=date_col, value=group_data[brand]["수량"])
+            ws_stats.cell(row=r, column=date_col + 1, value=group_data[brand]["금액"])
+        total_row += len(missing)
+
+    # 합 계 업데이트
+    if total_row:
+        total_qty = sum(d["수량"] for d in group_data.values())
+        total_amt = sum(d["금액"] for d in group_data.values())
+        ws_stats.cell(row=total_row, column=date_col, value=total_qty).font = Font(bold=True)
+        ws_stats.cell(row=total_row, column=date_col + 1, value=total_amt).font = Font(bold=True)
 
 
 def _write_stats_sheet(ws_stats, ref_date: date, brand_group_totals: dict,
