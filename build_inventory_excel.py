@@ -548,10 +548,11 @@ def _write_stats_sheet(ws_stats, ref_date: date, brand_group_totals: dict,
     brand_group_totals: {group: {brand: {수량: int, 금액: int}}}
     all_brands: 브랜드 표시 순서 목록
     """
-    # 기존 내용 전체 삭제 후 재작성
+    # 기존 내용 전체 삭제 후 재작성 (값 + 서식 모두 초기화)
     for row in ws_stats.iter_rows():
         for cell in row:
             cell.value = None
+            cell.number_format = "General"
 
     current_row = 1
     for group in group_cols:
