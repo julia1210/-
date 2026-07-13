@@ -526,38 +526,25 @@ def _update_section(ws_stats, sect_start: int, ref_date: date, group_data: dict)
 def _write_stats_sheet(ws_stats, ref_date: date, brand_group_totals: dict,
                        group_cols: list, all_brands: list):
     """
-    통계 시트 전체를 부서별 섹션으로 작성하거나 기존에 날짜 열을 추가한다.
+    통계 시트를 부서별 섹션으로 처음부터 새로 작성한다.
+    API에서 전체 데이터를 가져오므로 기존 내용은 지우고 재작성한다.
 
     brand_group_totals: {group: {brand: {수량: int, 금액: int}}}
     all_brands: 브랜드 표시 순서 목록
     """
-    all_section_names = set(GROUP_SECTION_NAMES.values())
+    # 기존 내용 전체 삭제 후 재작성
+    for row in ws_stats.iter_rows():
+        for cell in row:
+            cell.value = None
 
-    # 기존 섹션 위치 탐색
-    existing_sections: dict[str, int] = {}
-    for row in ws_stats.iter_rows(min_col=1, max_col=1):
-        val = str(row[0].value or "").strip()
-        if val in all_section_names:
-            existing_sections[val] = row[0].row
-
-    if existing_sections:
-        # 기존 파일: 각 섹션에 날짜 열 추가
-        for group in group_cols:
-            sect_name = GROUP_SECTION_NAMES.get(group, group)
-            if sect_name not in existing_sections:
-                continue
-            _update_section(ws_stats, existing_sections[sect_name],
-                            ref_date, brand_group_totals.get(group, {}))
-    else:
-        # 새 파일: 전체 구조 생성
-        current_row = 1
-        for group in group_cols:
-            sect_name = GROUP_SECTION_NAMES.get(group, group)
-            group_data = brand_group_totals.get(group, {})
-            if not group_data:
-                continue
-            current_row = _write_section(ws_stats, current_row, sect_name,
-                                          ref_date, group_data, all_brands)
+    current_row = 1
+    for group in group_cols:
+        sect_name = GROUP_SECTION_NAMES.get(group, group)
+        group_data = brand_group_totals.get(group, {})
+        if not group_data:
+            continue
+        current_row = _write_section(ws_stats, current_row, sect_name,
+                                      ref_date, group_data, all_brands)
 
 
 def build_excel(inventory: dict, base_date: str, base_excel: Path | None,
@@ -591,10 +578,13 @@ def build_excel(inventory: dict, base_date: str, base_excel: Path | None,
 
     # 브랜드별 품목 그룹핑
     # NAMED_BRANDS에 없는 브랜드는 모두 기타브랜드로 합산
+    unmapped_raw_brands: dict[str, int] = {}  # 기타브랜드로 묶인 원본 브랜드명 카운트
     brand_items: dict[str, list] = defaultdict(list)
     for prod_cd, info in sorted(inventory.items()):
-        brand = normalize_brand_name(info["brand"])
+        raw_brand = info["brand"]
+        brand = normalize_brand_name(raw_brand)
         if brand not in NAMED_BRANDS:
+            unmapped_raw_brands[raw_brand] = unmapped_raw_brands.get(raw_brand, 0) + 1
             brand = "기타브랜드"
         existing = prod_map.get(prod_cd, {})
         prod_name = existing.get("name") or info["prod_des"]
@@ -607,6 +597,12 @@ def build_excel(inventory: dict, base_date: str, base_excel: Path | None,
             "price": price,
             "groups": info["groups"],
         })
+
+    # 기타브랜드로 분류된 브랜드명 출력 (디버그용)
+    if unmapped_raw_brands:
+        print("\n  [기타브랜드로 묶인 브랜드 목록] ← 이 중 별도 시트가 필요한 게 있으면 알려주세요:")
+        for b, cnt in sorted(unmapped_raw_brands.items(), key=lambda x: -x[1]):
+            print(f"    {b!r}: {cnt}개 품목")
 
     # 브랜드 시트 생성/업데이트
     for brand, items in sorted(brand_items.items()):
