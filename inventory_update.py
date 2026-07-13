@@ -518,6 +518,19 @@ def main():
     print(f"\n[3/4] 엑셀 업데이트: {args.template}")
     wb = openpyxl.load_workbook(args.template)
 
+    # 기존 파일의 옛날 시트명 → 새 시트명으로 자동 변환
+    OLD_TO_NEW_SHEET = {
+        "블로키 ":      "블로키",
+        "핫토이_온라인": "핫토이",
+        "CCS ":        "CCS TOYS",
+        "P001 온라인":  "P001",
+        "코코파":       "코코파스튜디오",
+    }
+    for old, new in OLD_TO_NEW_SHEET.items():
+        if old in wb.sheetnames and new not in wb.sheetnames:
+            wb[old].title = new
+            print(f"      시트명 변경: '{old}' → '{new}'")
+
     total_updated = total_new = 0
     for sheet_name, items in by_sheet.items():
         if sheet_name not in wb.sheetnames:
