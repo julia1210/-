@@ -25,6 +25,7 @@ import re
 import json
 import argparse
 import traceback
+import unicodedata
 from pathlib import Path
 from datetime import datetime, date
 from collections import defaultdict
@@ -126,13 +127,28 @@ _BRAND_NORM: dict[str, str] = {
 }
 
 
+def _nfc(s: str) -> str:
+    return unicodedata.normalize("NFC", s.strip())
+
+
 def normalize_brand_name(brand: str) -> str:
     """이카운트 브랜드명을 정규 브랜드명으로 변환한다."""
     if not brand:
         return "기타브랜드"
-    if brand in NAMED_BRANDS:
-        return brand
-    return _BRAND_NORM.get(brand.lower().strip(), brand)
+    cleaned = _nfc(brand)
+    # 1) 정확히 NAMED_BRANDS에 있으면 바로 반환
+    if cleaned in NAMED_BRANDS:
+        return cleaned
+    # 2) 소문자로 _BRAND_NORM 매핑 시도
+    mapped = _BRAND_NORM.get(cleaned.lower())
+    if mapped:
+        return mapped
+    # 3) NAMED_BRANDS에서 대소문자·공백 무시하고 탐색
+    cl = cleaned.lower()
+    for nb in NAMED_BRANDS:
+        if _nfc(nb).lower() == cl:
+            return nb
+    return cleaned
 
 
 BRAND_ALIASES = {
@@ -583,7 +599,8 @@ def build_excel(inventory: dict, base_date: str, base_excel: Path | None,
     for prod_cd, info in sorted(inventory.items()):
         raw_brand = info["brand"]
         brand = normalize_brand_name(raw_brand)
-        if brand not in NAMED_BRANDS:
+        # normalize 후에도 NAMED_BRANDS에 없으면 기타브랜드
+        if _nfc(brand) not in {_nfc(b) for b in NAMED_BRANDS}:
             unmapped_raw_brands[raw_brand] = unmapped_raw_brands.get(raw_brand, 0) + 1
             brand = "기타브랜드"
         existing = prod_map.get(prod_cd, {})
