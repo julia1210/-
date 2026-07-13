@@ -359,19 +359,25 @@ def _write_brand_sheet(ws, brand: str, rows: list, group_cols: list):
 
 
 def _find_date_col(ws_stats, header_row: int, ref_date: date) -> int:
-    """섹션 header_row에서 ref_date 열 위치를 찾거나 새 열 위치를 반환한다."""
-    max_col = ws_stats.max_column
-    for col in range(2, max_col + 1, 2):
+    """
+    섹션 header_row에서 ref_date 열 위치를 찾거나 새 열 위치를 반환한다.
+    전체 max_column 대신 해당 행의 날짜 셀만 순서대로 탐색해
+    섹션마다 열이 밀리는 문제를 방지한다.
+    """
+    last_date_col = 0
+    col = 2
+    while True:
         cv = ws_stats.cell(row=header_row, column=col).value
         if isinstance(cv, (date, datetime)):
             cd = cv.date() if isinstance(cv, datetime) else cv
             if cd == ref_date:
-                return col
-    # 새 열: 짝수 위치
-    date_col = max_col + 1
-    if date_col % 2 != 0:
-        date_col += 1
-    return date_col
+                return col          # 이미 존재하는 날짜 → 덮어쓰기
+            last_date_col = col
+            col += 2
+        else:
+            break                   # 날짜 없는 셀 → 이 섹션 날짜 끝
+    # 마지막 날짜 열 바로 다음 짝수 열
+    return (last_date_col + 2) if last_date_col else 2
 
 
 def _write_section(ws, start_row: int, sect_name: str, ref_date: date,
