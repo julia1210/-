@@ -81,6 +81,60 @@ STATS_BRAND_ORDER = [
 # 브랜드 추출
 # ─────────────────────────────────────────
 
+# 이카운트 API에서 오는 다양한 브랜드명 표기 → 정규 브랜드명 매핑 (소문자 키)
+_BRAND_NORM: dict[str, str] = {
+    # 굿스마일
+    "굿스마일컴퍼니": "굿스마일",
+    "굿스마일(good smile)": "굿스마일",
+    "굿스마일상하이": "굿스마일",
+    "굿스마일아츠상하이": "굿스마일",
+    "good smile company, inc. (굿스마일)": "굿스마일",
+    "good smile": "굿스마일",
+    "good smile company": "굿스마일",
+    "goodsmilecompany": "굿스마일",
+    "gsc": "굿스마일",
+    "max factory": "굿스마일",
+    "orange rouge": "굿스마일",
+    "freeing": "굿스마일",
+    "phat!": "굿스마일",
+    "phat! company": "굿스마일",
+    # 메가하우스
+    "메가하우스(megahouse)": "메가하우스",
+    "mega house (메가하우스)": "메가하우스",
+    "megahouse": "메가하우스",
+    # 부시로드
+    "bushiroad creative": "부시로드",
+    # 반다이남코
+    "반다이": "반다이남코",
+    "bandai namco arts": "반다이남코",
+    "bandai namco filmworks": "반다이남코",
+    "bandai": "반다이남코",
+    # 핫토이
+    "핫토이(hottoys)": "핫토이",
+    "핫토이(hot toys)": "핫토이",
+    "hot toys": "핫토이",
+    "hottoys": "핫토이",
+    # 하비재팬
+    "hobby japan (하비재팬)": "하비재팬",
+    "hobby japan": "하비재팬",
+    "hobbyjapan": "하비재팬",
+    # CCS TOYS
+    "ccs": "CCS TOYS",
+    "ccstoys": "CCS TOYS",
+    # 코코파스튜디오
+    "코코파": "코코파스튜디오",
+}
+
+
+def normalize_brand_name(brand: str) -> str:
+    """이카운트 브랜드명을 정규 브랜드명으로 변환한다."""
+    if not brand:
+        return "기타브랜드"
+    if brand in NAMED_BRANDS:
+        return brand
+    return _BRAND_NORM.get(brand.lower().strip(), brand)
+
+
 BRAND_ALIASES = {
     "굿스마일컴퍼니": "굿스마일",
     "GSC": "굿스마일",
@@ -104,16 +158,13 @@ def extract_brand(prod_des: str) -> str:
     m = re.match(r"\[([^\]]+)\]", prod_des.strip())
     if m:
         raw = m.group(1).strip()
-        # 정확히 알려진 브랜드면 그대로
         for brand in KNOWN_BRANDS:
             if raw == brand or raw.lower() == brand.lower():
                 return brand
-        # alias 매핑
         for alias, canonical in BRAND_ALIASES.items():
             if alias.lower() in raw.lower():
                 return canonical
         return raw
-    # 브랜드 접두어 없으면 기타
     return "기타브랜드"
 
 
@@ -542,7 +593,7 @@ def build_excel(inventory: dict, base_date: str, base_excel: Path | None,
     # NAMED_BRANDS에 없는 브랜드는 모두 기타브랜드로 합산
     brand_items: dict[str, list] = defaultdict(list)
     for prod_cd, info in sorted(inventory.items()):
-        brand = info["brand"]
+        brand = normalize_brand_name(info["brand"])
         if brand not in NAMED_BRANDS:
             brand = "기타브랜드"
         existing = prod_map.get(prod_cd, {})
