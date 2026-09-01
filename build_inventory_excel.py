@@ -385,24 +385,32 @@ def _active_groups(rows: list, group_cols: list) -> list:
     return active if active else group_cols
 
 
-def _write_brand_sheet(ws, brand: str, rows: list, group_cols: list):
+def _date_tag(ref_date) -> str:
+    """날짜 컬럼 suffix: MM/DD 형식"""
+    return ref_date.strftime("%m/%d")
+
+
+def _qty_header(disp: str, tag: str) -> str:
+    return f"{disp}수량 {tag}" if disp == "영업" else f"{disp} 수량 {tag}"
+
+
+def _amt_header(disp: str, tag: str) -> str:
+    return f"{disp} 재고금액 {tag}"
+
+
+def _write_brand_sheet(ws, brand: str, rows: list, group_cols: list, ref_date=None):
     """
-    브랜드별 시트를 작성한다.
+    브랜드별 시트를 새로 작성한다. (최초 생성 시)
     rows: [ {name, price, groups:{온라인:qty, ...}} ]
-    group_cols: WH_GROUPS 키 목록 (데이터 있는 그룹만 동적으로 축소됨)
     """
     ws.freeze_panes = "A2"
-
-    # 데이터 있는 그룹만 표시
     active = _active_groups(rows, group_cols)
+    tag = _date_tag(ref_date) if ref_date else ""
 
-    # 헤더: 브랜드, 품목명, 입고단가, (그룹별 수량/금액)
-    # 표시명: 사업지원TF → 사업지원, 컨기부 → 컨기
     headers = ["브랜드", "품목명", "입고단가"]
     for g in active:
         disp = GROUP_DISPLAY.get(g, g)
-        headers += [f"{disp}수량" if disp == "영업" else f"{disp} 수량",
-                    f"{disp} 재고금액"]
+        headers += [_qty_header(disp, tag), _amt_header(disp, tag)]
 
     for col, h in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=h)
@@ -411,43 +419,121 @@ def _write_brand_sheet(ws, brand: str, rows: list, group_cols: list):
         cell.alignment = CENTER
         cell.border = THIN_BORDER
 
-    # 열 너비
     col_widths = [10, 55, 12] + [12, 16] * len(active)
     for col, w in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(col)].width = w
 
-    price_col = 3
-
-    # 데이터 행
     for r_idx, item in enumerate(rows, 2):
         ws.cell(row=r_idx, column=1, value=brand)
         ws.cell(row=r_idx, column=2, value=item["name"])
         ws.cell(row=r_idx, column=3, value=item["price"])
-
         col_offset = 4
         for g in active:
             qty = item["groups"].get(g, 0.0)
             qty_val = int(qty) if qty == int(qty) else qty
-            price = _to_int_price(item["price"])
-            amt_val = int(qty_val * price)
+            amt_val = int(qty_val * _to_int_price(item["price"]))
             ws.cell(row=r_idx, column=col_offset, value=qty_val)
             ws.cell(row=r_idx, column=col_offset + 1, value=amt_val)
             col_offset += 2
 
-    # 합계 행
     total_row = len(rows) + 2
     ws.cell(row=total_row, column=2, value="합계").font = Font(bold=True)
     col_offset = 4
     for g in active:
-        total_qty = sum(
-            int(it["groups"].get(g, 0)) for it in rows
-        )
-        total_amt = sum(
-            int(it["groups"].get(g, 0)) * _to_int_price(it["price"]) for it in rows
-        )
+        total_qty = sum(int(it["groups"].get(g, 0)) for it in rows)
+        total_amt = sum(int(it["groups"].get(g, 0)) * _to_int_price(it["price"]) for it in rows)
         ws.cell(row=total_row, column=col_offset, value=total_qty).font = Font(bold=True)
         ws.cell(row=total_row, column=col_offset + 1, value=total_amt).font = Font(bold=True)
         col_offset += 2
+
+
+def _update_brand_sheet(ws, brand: str, rows: list, group_cols: list, ref_date):
+    """
+    기존 브랜드 시트에 새 날짜 컬럼을 추가하거나 기존 날짜 컬럼을 업데이트한다.
+    """
+    tag = _date_tag(ref_date)
+    active = _active_groups(rows, group_cols)
+
+    # 헤더 행 읽기
+    header_map = {}  # 헤더값 → 열번호
+    for c in range(1, ws.max_column + 1):
+        v = ws.cell(1, c).value
+        if v:
+            header_map[str(v)] = c
+
+    # 현재 날짜 컬럼 존재 여부 확인 및 열번호 매핑
+    date_col_map = {}  # group → (qty_col, amt_col)
+    date_exists = any(tag in k for k in header_map)
+
+    if date_exists:
+        for g in active:
+            disp = GROUP_DISPLAY.get(g, g)
+            qh = _qty_header(disp, tag)
+            ah = _amt_header(disp, tag)
+            if qh in header_map and ah in header_map:
+                date_col_map[g] = (header_map[qh], header_map[ah])
+    else:
+        # 새 날짜 컬럼 추가
+        next_col = ws.max_column + 1
+        for g in active:
+            disp = GROUP_DISPLAY.get(g, g)
+            qh = _qty_header(disp, tag)
+            ah = _amt_header(disp, tag)
+            for h, col in [(qh, next_col), (ah, next_col + 1)]:
+                cell = ws.cell(1, col, value=h)
+                cell.fill = HEADER_FILL
+                cell.font = HEADER_FONT
+                cell.alignment = CENTER
+                cell.border = THIN_BORDER
+                ws.column_dimensions[get_column_letter(col)].width = 14
+            date_col_map[g] = (next_col, next_col + 1)
+            next_col += 2
+
+    # 품목명 → 행번호 매핑 (기존 데이터)
+    name_row_map = {}
+    last_data_row = 1
+    for r in range(2, ws.max_row + 1):
+        v = ws.cell(r, 2).value
+        if v and str(v) != "합계":
+            name_row_map[str(v)] = r
+            last_data_row = r
+
+    # 새 품목 데이터 쓰기
+    new_items = []
+    for item in rows:
+        name = item["name"]
+        if name in name_row_map:
+            r_idx = name_row_map[name]
+        else:
+            # 새 품목: 합계 행 위에 삽입
+            last_data_row += 1
+            r_idx = last_data_row
+            ws.cell(r_idx, 1, value=brand)
+            ws.cell(r_idx, 2, value=name)
+            ws.cell(r_idx, 3, value=item["price"])
+            new_items.append(name)
+
+        for g in active:
+            if g not in date_col_map:
+                continue
+            qty_col, amt_col = date_col_map[g]
+            qty = item["groups"].get(g, 0.0)
+            qty_val = int(qty) if qty == int(qty) else qty
+            amt_val = int(qty_val * _to_int_price(item["price"]))
+            ws.cell(r_idx, qty_col, value=qty_val)
+            ws.cell(r_idx, amt_col, value=amt_val)
+
+    # 합계 행 업데이트
+    total_row = last_data_row + 1
+    ws.cell(total_row, 2, value="합계").font = Font(bold=True)
+    for g in active:
+        if g not in date_col_map:
+            continue
+        qty_col, amt_col = date_col_map[g]
+        total_qty = sum(int(it["groups"].get(g, 0)) for it in rows)
+        total_amt = sum(int(it["groups"].get(g, 0)) * _to_int_price(it["price"]) for it in rows)
+        ws.cell(total_row, qty_col, value=total_qty).font = Font(bold=True)
+        ws.cell(total_row, amt_col, value=total_amt).font = Font(bold=True)
 
 
 def _find_date_col(ws_stats, header_row: int, ref_date: date) -> int:
@@ -651,14 +737,16 @@ def build_excel(inventory: dict, base_date: str, base_excel: Path | None,
         for b, cnt in sorted(unmapped_raw_brands.items(), key=lambda x: -x[1]):
             print(f"    {b!r}: {cnt}개 품목")
 
-    # 브랜드 시트 생성/업데이트
+    # 브랜드 시트 생성/업데이트 (날짜별 컬럼 누적)
     for brand, items in sorted(brand_items.items()):
         sheet_name = BRAND_SHEET_MAP.get(brand, brand)[:31]
         if sheet_name in wb.sheetnames:
-            del wb[sheet_name]
-        ws = wb.create_sheet(title=sheet_name)
-        _write_brand_sheet(ws, brand, items, group_cols)
-        print(f"  시트 [{sheet_name}]: {len(items)}개 품목")
+            _update_brand_sheet(wb[sheet_name], brand, items, group_cols, ref_date)
+            print(f"  시트 [{sheet_name}]: {len(items)}개 품목 (날짜 컬럼 추가/업데이트)")
+        else:
+            ws = wb.create_sheet(title=sheet_name)
+            _write_brand_sheet(ws, brand, items, group_cols, ref_date)
+            print(f"  시트 [{sheet_name}]: {len(items)}개 품목 (신규 생성)")
 
     # 통계 시트 처리: 그룹별 × 브랜드별 수량/금액 집계
     brand_group_totals: dict[str, dict] = {}
