@@ -600,11 +600,15 @@ def build_excel(inventory: dict, base_date: str, base_excel: Path | None,
     for prod_cd, info in sorted(inventory.items()):
         raw_brand = info["brand"]
         brand = normalize_brand_name(raw_brand)
-        # normalize 후에도 NAMED_BRANDS에 없으면 기타브랜드
+        # normalize 후에도 NAMED_BRANDS에 없으면 품목명에서 브랜드 추출 시도
         if _nfc(brand) not in {_nfc(b) for b in NAMED_BRANDS}:
-            unmapped_raw_brands[raw_brand] = unmapped_raw_brands.get(raw_brand, 0) + 1
-            print(f"      [DEBUG 미매핑] raw={repr(raw_brand)}  →  normalized={repr(brand)}")
-            brand = "기타브랜드"
+            extracted = extract_brand(info.get("prod_des", ""))
+            extracted_norm = normalize_brand_name(extracted)
+            if _nfc(extracted_norm) in {_nfc(b) for b in NAMED_BRANDS}:
+                brand = extracted_norm
+            else:
+                unmapped_raw_brands[raw_brand] = unmapped_raw_brands.get(raw_brand, 0) + 1
+                brand = "기타브랜드"
         existing = prod_map.get(prod_cd, {})
         prod_name = existing.get("name") or info["prod_des"]
         # 단가: 기존 Excel 품목코드 → 품목명 → 품목 마스터(in_price) 순으로 사용
