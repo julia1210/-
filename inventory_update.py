@@ -21,6 +21,7 @@
 import argparse
 import re
 import sys
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -110,14 +111,19 @@ BRAND_TO_SHEET = {
     # 핫토이
     "핫토이":                               "핫토이",
     "핫토이(hottoys)":                       "핫토이",
+    "핫토이(hot toys)":                      "핫토이",
     "hot toys":                             "핫토이",
+    "hottoys":                              "핫토이",
     # 하비재팬
     "하비재팬":                              "하비재팬",
     "hobby japan (하비재팬)":                "하비재팬",
+    "hobby japan":                          "하비재팬",
+    "hobbyjapan":                           "하비재팬",
     # CCS TOYS
     "ccs":                                  "CCS TOYS",
     "ccs toys":                             "CCS TOYS",
     "ccstoys":                              "CCS TOYS",
+    "ccs toys (씨씨에스토이즈)":             "CCS TOYS",
     # 코코파스튜디오
     "코코파":                               "코코파스튜디오",
     "코코파스튜디오":                         "코코파스튜디오",
@@ -169,8 +175,12 @@ SHEET_LAST_ROW = {
 # ──────────────────────────────────────────────────────────────
 
 def normalize_brand(raw: str) -> str:
-    key = raw.lower().strip()
-    return BRAND_TO_SHEET.get(key, "기타브랜드")
+    # NFC 정규화: 한글 NFD(분해형) → NFC(합성형) 변환 후 소문자/공백 제거
+    key = unicodedata.normalize("NFC", raw).lower().strip()
+    result = BRAND_TO_SHEET.get(key, "기타브랜드")
+    if result == "기타브랜드":
+        print(f"      [DEBUG 미매핑] raw={repr(raw)}  key={repr(key)}")
+    return result
 
 
 def int_or_zero(v) -> int:
