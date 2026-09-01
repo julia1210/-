@@ -212,7 +212,14 @@ def fetch_all_groups(base_date: str) -> dict:
     item_master, barcode_index = fetch_item_master()
 
     print("  전체 창고 재고 조회 중 (1회)...", end=" ", flush=True)
-    raw = get_inventory_by_location(base_date)   # WH_CD 없이 → 전체 조회
+    try:
+        raw = get_inventory_by_location(base_date)
+    except Exception as e:
+        if "412" in str(e) or "Precondition" in str(e):
+            print(f"\n  세션 만료 감지, 강제 재로그인 후 재시도...")
+            raw = get_inventory_by_location(base_date, force_login=True)
+        else:
+            raise
     all_rows = extract_rows(raw)
     print(f"{len(all_rows)}건")
 
