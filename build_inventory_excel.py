@@ -690,7 +690,11 @@ def main():
     else:
         out_dir = Path("output")
         if out_dir.exists():
-            xlsx_files = sorted(out_dir.glob("*재고현황*.xlsx"), reverse=True)
+            # ~$ 로 시작하는 엑셀 잠금 파일 제외
+            xlsx_files = sorted(
+                [f for f in out_dir.glob("*재고현황*.xlsx") if not f.name.startswith("~$")],
+                reverse=True
+            )
             if xlsx_files:
                 base_excel = xlsx_files[0]
                 print(f"  기존 파일: {base_excel} (자동 탐색)")
