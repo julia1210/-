@@ -224,6 +224,8 @@ def fetch_all_groups(base_date: str) -> dict:
     print(f"{len(all_rows)}건")
 
     group_data: dict[str, dict[str, float]] = {g: defaultdict(float) for g in WH_GROUPS}
+    # 재고 API 응답에서 품목명/브랜드 보조 정보 수집 (품목마스터에 없는 품목 대비)
+    inv_prod_info: dict[str, dict] = {}
 
     for row in all_rows:
         if not isinstance(row, dict):
@@ -233,6 +235,13 @@ def fetch_all_groups(base_date: str) -> dict:
         prod_cd = str(row.get("PROD_CD") or "").strip()
         if not prod_cd or wh_cd not in wh_to_group:
             continue
+
+        # 재고 행에서 품목명·브랜드 수집 (한 번만 저장)
+        if prod_cd not in inv_prod_info:
+            inv_prod_info[prod_cd] = {
+                "prod_des": str(row.get("PROD_DES") or "").strip(),
+                "brand":    str(row.get("CONT1") or "").strip(),
+            }
 
         group = wh_to_group[wh_cd]
         try:
@@ -255,9 +264,11 @@ def fetch_all_groups(base_date: str) -> dict:
     for prod_cd in all_prod_cds:
         # 품목코드로 먼저 조회, 없으면 바코드 역방향 조회 (컨기부 등 바코드=품목코드 케이스)
         master = item_master.get(prod_cd) or barcode_index.get(prod_cd, {})
-        prod_des = master.get("prod_des") or prod_cd
-        # 브랜드: CONT1이 비어있거나 '기타브랜드'면 품목명에서 추출
-        _cont1 = master.get("brand") or ""
+        # 품목마스터에 없으면 재고 API 응답에서 보완
+        inv_info = inv_prod_info.get(prod_cd, {})
+        prod_des = master.get("prod_des") or inv_info.get("prod_des") or prod_cd
+        # 브랜드: 품목마스터 CONT1 → 재고API CONT1 → 품목명 파싱 순으로 시도
+        _cont1 = master.get("brand") or inv_info.get("brand") or ""
         if _cont1 and _cont1 != "기타브랜드":
             brand = _cont1
         else:
