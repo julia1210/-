@@ -249,8 +249,12 @@ def fetch_all_groups(base_date: str) -> dict:
         # 품목코드로 먼저 조회, 없으면 바코드 역방향 조회 (컨기부 등 바코드=품목코드 케이스)
         master = item_master.get(prod_cd) or barcode_index.get(prod_cd, {})
         prod_des = master.get("prod_des") or prod_cd
-        # 브랜드: CONT1 우선, 없으면 PROD_DES 파싱
-        brand = master.get("brand") or extract_brand(prod_des)
+        # 브랜드: CONT1이 비어있거나 '기타브랜드'면 품목명에서 추출
+        _cont1 = master.get("brand") or ""
+        if _cont1 and _cont1 != "기타브랜드":
+            brand = _cont1
+        else:
+            brand = extract_brand(prod_des)
         result[prod_cd] = {
             "prod_des": prod_des,
             "brand":    brand,
