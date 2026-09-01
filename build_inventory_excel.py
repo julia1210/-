@@ -173,12 +173,12 @@ def extract_brand(prod_des: str) -> str:
         return "기타브랜드"
     m = re.match(r"\[([^\]]+)\]", prod_des.strip())
     if m:
-        raw = m.group(1).strip()
+        raw = _nfc(m.group(1).strip())  # NFC 정규화로 한글 NFD/NFC 불일치 방지
         for brand in KNOWN_BRANDS:
-            if raw == brand or raw.lower() == brand.lower():
+            if raw == _nfc(brand) or raw.lower() == _nfc(brand).lower():
                 return brand
         for alias, canonical in BRAND_ALIASES.items():
-            if alias.lower() in raw.lower():
+            if _nfc(alias).lower() in raw.lower():
                 return canonical
         return raw
     return "기타브랜드"
