@@ -168,12 +168,14 @@ KNOWN_BRANDS = list(BRAND_SHEET_MAP.keys())
 
 
 def extract_brand(prod_des: str) -> str:
-    """PROD_DES에서 브랜드명을 추출한다. '[브랜드명]...' 형식 우선."""
+    """PROD_DES에서 브랜드명을 추출한다. '[브랜드명]...' 형식 우선, 그 다음 앞부분 일치."""
     if not prod_des:
         return "기타브랜드"
-    m = re.match(r"\[([^\]]+)\]", prod_des.strip())
+    cleaned = _nfc(prod_des.strip())
+    # 1) [브랜드명] 형식
+    m = re.match(r"\[([^\]]+)\]", cleaned)
     if m:
-        raw = _nfc(m.group(1).strip())  # NFC 정규화로 한글 NFD/NFC 불일치 방지
+        raw = _nfc(m.group(1).strip())
         for brand in KNOWN_BRANDS:
             if raw == _nfc(brand) or raw.lower() == _nfc(brand).lower():
                 return brand
@@ -181,6 +183,16 @@ def extract_brand(prod_des: str) -> str:
             if _nfc(alias).lower() in raw.lower():
                 return canonical
         return raw
+    # 2) 품목명이 알려진 브랜드명으로 시작하는 경우 (예: "CCS EVANGELIOM...")
+    cl = cleaned.lower()
+    for brand in sorted(KNOWN_BRANDS, key=len, reverse=True):  # 긴 이름 우선
+        b_nfc = _nfc(brand).lower()
+        if cl.startswith(b_nfc + " ") or cl.startswith(b_nfc + "_") or cl == b_nfc:
+            return brand
+    for alias, canonical in BRAND_ALIASES.items():
+        a = _nfc(alias).lower()
+        if cl.startswith(a + " ") or cl.startswith(a + "_") or cl == a:
+            return canonical
     return "기타브랜드"
 
 
