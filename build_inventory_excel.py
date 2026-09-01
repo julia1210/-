@@ -268,8 +268,10 @@ def fetch_all_groups(base_date: str) -> dict:
         inv_info = inv_prod_info.get(prod_cd, {})
         prod_des = master.get("prod_des") or inv_info.get("prod_des") or prod_cd
         # 브랜드: 품목마스터 CONT1 → 재고API CONT1 → 품목명 파싱 순으로 시도
-        _cont1 = master.get("brand") or inv_info.get("brand") or ""
-        if _cont1 and _cont1 != "기타브랜드":
+        # '기타브랜드'는 유효한 브랜드명으로 취급하지 않고 다음 단계로 넘어감
+        def _pick(v): return v if (v and v != "기타브랜드") else ""
+        _cont1 = _pick(master.get("brand")) or _pick(inv_info.get("brand")) or ""
+        if _cont1:
             brand = _cont1
         else:
             brand = extract_brand(prod_des)
