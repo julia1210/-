@@ -603,6 +603,7 @@ def build_excel(inventory: dict, base_date: str, base_excel: Path | None,
         # normalize 후에도 NAMED_BRANDS에 없으면 기타브랜드
         if _nfc(brand) not in {_nfc(b) for b in NAMED_BRANDS}:
             unmapped_raw_brands[raw_brand] = unmapped_raw_brands.get(raw_brand, 0) + 1
+            print(f"      [DEBUG 미매핑] raw={repr(raw_brand)}  →  normalized={repr(brand)}")
             brand = "기타브랜드"
         existing = prod_map.get(prod_cd, {})
         prod_name = existing.get("name") or info["prod_des"]
